@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/zeebo/bencode"
 
@@ -130,6 +131,13 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 			return nil, poke.WrapError("unable to decode", err)
 		}
 
+		if strings.Contains(string(b), "failure reason") {
+			return nil, errors.New("tracker returned error")
+		}
+		if strings.Contains(string(b), "warning message") {
+			return nil, errors.New("tracker returned warning")
+		}
+
 		if r.FailureReason != "" {
 			return nil, fmt.Errorf("tracker returned error: %s", r.FailureReason)
 		}
@@ -174,6 +182,13 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	err = bencode.DecodeBytes(b, &r)
 	if err != nil {
 		return nil, poke.WrapError("unable to decode", err)
+	}
+
+	if strings.Contains(string(b), "failure reason") {
+		return nil, errors.New("tracker returned error")
+	}
+	if strings.Contains(string(b), "warning message") {
+		return nil, errors.New("tracker returned warning")
 	}
 
 	if r.FailureReason != "" {
