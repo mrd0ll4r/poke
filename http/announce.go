@@ -5,13 +5,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/mrd0ll4r/poke"
-	"github.com/zeebo/bencode"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
+
+	"github.com/zeebo/bencode"
+
+	"github.com/mrd0ll4r/poke"
 )
 
 // BaseAnnounceResponse contains the fields present in all announce responses.
@@ -58,7 +59,7 @@ var _ poke.Announcer = &Client{}
 func NewClient(announceAddress string) (*Client, error) {
 	u, err := url.Parse(announceAddress)
 	if err != nil {
-		return nil, err
+		return nil, poke.WrapError("invalid announce URL", err)
 	}
 
 	return &Client{
@@ -91,8 +92,12 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 		v.Set("event", "stopped")
 	case poke.EventCompleted:
 		v.Set("event", "completed")
+	case poke.EventInvalid:
+		v.Set("event", "invalid")
+	case poke.EventNone:
+
 	default:
-		return nil, errors.New("invalid event")
+		return nil, errors.New("unknown event")
 	}
 
 	for _, b := range []byte(a.IP) {
@@ -106,33 +111,30 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	}
 
 	u.RawQuery = v.Encode()
+	poke.Debugf("Announcing: %s\n", u.String())
 	resp, err := c.client.Get(u.String())
 	if err != nil {
-		return nil, err
+		return nil, poke.WrapError("unable to connect", err)
 	}
 	defer resp.Body.Close()
 	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, poke.WrapError("unable to read", err)
 	}
-
-	fmt.Println("Response:", string(b))
+	poke.Debugf("Response: %s\n", string(b))
 
 	if a.Compact {
 		r := CompactAnnounceResponse{}
 		err = bencode.DecodeBytes(b, &r)
 		if err != nil {
-			log.Println(err)
-			return nil, err
+			return nil, poke.WrapError("unable to decode", err)
 		}
 
 		if r.FailureReason != "" {
-			log.Println(r.FailureReason)
-			return nil, errors.New(r.FailureReason)
+			return nil, fmt.Errorf("tracker returned error: %s", r.FailureReason)
 		}
 		if r.WarningMessage != "" {
-			log.Println(r.FailureReason)
-			return nil, errors.New(r.WarningMessage)
+			return nil, fmt.Errorf("tracker returned warning: %s", r.FailureReason)
 		}
 
 		ann := poke.AnnounceResponse{
@@ -149,8 +151,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 			reader := bytes.NewBuffer(r.Peers[4+i : 6+i])
 			err = binary.Read(reader, binary.BigEndian, &peer.Port)
 			if err != nil {
-				log.Println(err)
-				return nil, err
+				return nil, poke.WrapError("unable to decode port", err)
 			}
 			ann.Peers = append(ann.Peers, peer)
 		}
@@ -161,8 +162,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 			reader := bytes.NewBuffer(r.Peers[i+16 : i+18])
 			err = binary.Read(reader, binary.BigEndian, &peer.Port)
 			if err != nil {
-				log.Println(err)
-				return nil, err
+				return nil, poke.WrapError("unable to decode port", err)
 			}
 			ann.Peers = append(ann.Peers, peer)
 		}
@@ -173,17 +173,14 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	r := NonCompactAnnounceResponse{}
 	err = bencode.DecodeBytes(b, &r)
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		return nil, poke.WrapError("unable to decode", err)
 	}
 
 	if r.FailureReason != "" {
-		log.Println(r.FailureReason)
-		return nil, errors.New(r.FailureReason)
+		return nil, fmt.Errorf("tracker returned error: %s", r.FailureReason)
 	}
 	if r.WarningMessage != "" {
-		log.Println(r.WarningMessage)
-		return nil, errors.New(r.WarningMessage)
+		return nil, fmt.Errorf("tracker returned warning: %s", r.FailureReason)
 	}
 
 	ann := poke.AnnounceResponse{
