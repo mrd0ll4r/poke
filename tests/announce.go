@@ -325,8 +325,7 @@ func trackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI string) 
 			return false, nil
 		}
 	}
-		return false, errors.New("second announce with equal peer did return more than one peer")
-
+	return false, errors.New("second announce with equal peer did return more than one peer")
 
 }
 
@@ -412,7 +411,9 @@ func trackerSupportsOptimizedSeederHTTPAnnounce(announceURI string) (bool, error
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) > 1 {
+	if len(resp.Peers) < 1 {
+		return false, errors.New("announce did not return an expected peer")
+	} else if len(resp.Peers) > 1 {
 		return false, nil
 	}
 
@@ -498,8 +499,8 @@ func checkReturnedPeersHTTPAnnounce(announceURI string) error {
 	}
 
 	if !((resp.Peers[0].IsEqual(leecher2) || resp.Peers[0].IsEqual(seeder1) || resp.Peers[0].IsEqual(seeder2)) &&
-	(resp.Peers[1].IsEqual(leecher2) || resp.Peers[1].IsEqual(seeder1) || resp.Peers[1].IsEqual(seeder2)) &&
-	(resp.Peers[2].IsEqual(leecher2) || resp.Peers[2].IsEqual(seeder1) || resp.Peers[2].IsEqual(seeder2))) {
+		(resp.Peers[1].IsEqual(leecher2) || resp.Peers[1].IsEqual(seeder1) || resp.Peers[1].IsEqual(seeder2)) &&
+		(resp.Peers[2].IsEqual(leecher2) || resp.Peers[2].IsEqual(seeder1) || resp.Peers[2].IsEqual(seeder2))) {
 		return errors.New("leecher announce did not return both known seeders and the other leecher")
 	}
 

@@ -76,7 +76,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 		panic("url re-parse error")
 	}
 	v := u.Query()
-	v.Set("info_hash", url.QueryEscape(string(a.InfoHash)))
+	v.Set("info_hash", string(a.InfoHash))
 	v.Set("peer_id", a.ID)
 	v.Set("port", fmt.Sprint(a.Port))
 	v.Set("uploaded", fmt.Sprint(a.Uploaded))

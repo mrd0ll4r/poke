@@ -1,21 +1,21 @@
 package main
 
 import (
+	"flag"
 	"log"
 
 	"github.com/mrd0ll4r/poke"
 	"github.com/mrd0ll4r/poke/tests"
-	"flag"
 )
 
 func init() {
-	flag.StringVar(&announceURI,"a","http://localhost:6882/announce","the announce URI")
-	flag.BoolVar(&debug,"debug",false,"debug mode")
+	flag.StringVar(&announceURI, "a", "http://localhost:6882/announce", "the announce URI")
+	flag.BoolVar(&debug, "debug", false, "debug mode")
 }
 
 var (
 	announceURI string
-	debug bool
+	debug       bool
 )
 
 func main() {
@@ -38,7 +38,7 @@ func main() {
 		log.Println(err)
 	}
 
-	pruning,err := tests.TrackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI)
+	pruning, err := tests.TrackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI)
 	if err != nil {
 		log.Println(err)
 	} else {
