@@ -4,18 +4,22 @@ import (
 	"flag"
 	"log"
 
+	"fmt"
+
 	"github.com/mrd0ll4r/poke"
 	"github.com/mrd0ll4r/poke/tests"
 )
 
 func init() {
-	flag.StringVar(&announceURI, "a", "http://localhost:6882/announce", "the announce URI")
+	flag.StringVar(&announceURI, "a", "http://localhost:6881/announce", "the announce URI")
+	flag.StringVar(&udpAnnounceURI, "u", "localhost:6881", "the UDP announce URI")
 	flag.BoolVar(&debug, "debug", false, "debug mode")
 }
 
 var (
-	announceURI string
-	debug       bool
+	announceURI    string
+	udpAnnounceURI string
+	debug          bool
 )
 
 func main() {
@@ -23,74 +27,68 @@ func main() {
 
 	poke.Debug = debug
 
-	err := tests.BasicHTTPAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	}
-
-	err = tests.BasicHTTPNonCompactAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	}
-
-	err = tests.BasicHTTPSeederAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	}
-
-	pruning, err := tests.TrackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
+	if udpAnnounceURI != "" {
+		runUDPTests(udpAnnounceURI)
 	} else {
-		if pruning {
-			log.Println("tracker supports leaving the announcing peer out of the peer list")
-		} else {
-			log.Println("tracker does not support leaving the announcing peer out of the peer list")
+		runHTTPTests(announceURI)
+	}
+}
+
+func runUDPTests(addr string) {
+	res, err := tests.TestUDPTracker(addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	formatTrackerResult(res.TrackerResult)
+}
+
+func runHTTPTests(announceURI string) {
+	res, err := tests.TestHTTPTracker(announceURI)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Tracker supports HTTP compact announces: %t\n", res.SupportsCompact)
+	fmt.Printf("Tracker supports HTTP non-compact announces: %t\n", res.SupportsNonCompact)
+	formatTrackerResult(res.TrackerResult)
+}
+
+func formatTrackerResult(res tests.TrackerResult) {
+	fmt.Printf("Tracker supports IP spoofing: %t\n", res.SupportsIPSpoofing)
+	fmt.Printf("Tracker supports optimized announce responses: %t\n", res.SupportsAnnouncingPeerNotInPeerList)
+	fmt.Printf("Tracker supports optimized seeder announce responses: %t\n", res.SupportsOptimizedSeederResponse)
+
+	fmt.Println()
+	fmt.Println("Poke ran these tests:")
+	for _, t := range res.Tests {
+		if !t.Run {
+			continue
+		}
+		fmt.Println()
+		fmt.Printf("Test: %s\n", t.Name)
+		if t.Result.Result != nil {
+			fmt.Printf("Result: %v\n", t.Result.Result)
+		}
+		if t.Result.Err != nil {
+			fmt.Printf("Error: %s\n", t.Result.Err)
 		}
 	}
 
-	compact, err := tests.TrackerSupportsCompactHTTPAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	} else {
-		if compact {
-			log.Println("tracker supports compact HTTP announces")
-		} else {
-			log.Println("tracker does not support compact HTTP announces")
+	fmt.Println()
+	fmt.Println("Poke did not run these tests:")
+	for _, t := range res.Tests {
+		if t.Run {
+			continue
 		}
+		fmt.Printf("%s\t- %s\n", t.Name, t.NotRunReason)
 	}
+}
 
-	nonCompact, err := tests.TrackerSupportsNonCompactHTTPAnnounce(announceURI)
+func runOtherTests(announceURI string) {
+	err := tests.BasicHTTPSeederAnnounce(announceURI)
 	if err != nil {
 		log.Println(err)
-	} else {
-		if nonCompact {
-			log.Println("tracker supports non-compact HTTP announces")
-		} else {
-			log.Println("tracker does not support non-compact HTTP announces")
-		}
-	}
-
-	optimized, err := tests.TrackerSupportsOptimizedSeederHTTPAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	} else {
-		if optimized {
-			log.Println("tracker supports optimized responses for seeder announces (does not return other seeders)")
-		} else {
-			log.Println("tracker does not support optimized responses for seeder announces (returns other seeders)")
-		}
-	}
-
-	spoofing, err := tests.TrackerSupportsIPSpoofingHTTPAnnounce(announceURI)
-	if err != nil {
-		log.Println(err)
-	} else {
-		if spoofing {
-			log.Println("tracker supports IP spoofing")
-		} else {
-			log.Println("tracker does not support IP spoofing")
-		}
 	}
 
 	err = tests.CheckReturnedPeersHTTPAnnounce(announceURI)

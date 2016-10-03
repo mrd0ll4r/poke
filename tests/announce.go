@@ -2,21 +2,243 @@ package tests
 
 import (
 	"errors"
+	"log"
 	"math/rand"
 	"time"
 
 	"github.com/mrd0ll4r/poke"
 	"github.com/mrd0ll4r/poke/http"
+	"github.com/mrd0ll4r/poke/udp"
 )
 
-// BasicHTTPAnnounce performs a basic, compact HTTP announce.
-func BasicHTTPAnnounce(announceURI string) error {
-	return basicHTTPAnnounce(announceURI)
+// Test represents a test performed on a tracker.
+type Test struct {
+	Name         string
+	Run          bool
+	NotRunReason string
+	Result       TestResult
+}
+
+// TestResult represents the result of a test.
+type TestResult struct {
+	Result interface{}
+	Err    error
+}
+
+// HTTPResult represents the result of all tests performed on an HTTP tracker.
+type HTTPResult struct {
+	TrackerResult
+	SupportsCompact    bool
+	SupportsNonCompact bool
+}
+
+// TrackerResult represents the result of all tests performed on a tracker.
+type TrackerResult struct {
+	SupportsAnnouncingPeerNotInPeerList bool
+	SupportsIPSpoofing                  bool
+	SupportsOptimizedSeederResponse     bool
+	Tests                               []Test
+}
+
+// UDPResult represents the result of all tests performed on a UDP tracker.
+type UDPResult struct {
+	TrackerResult
+}
+
+// TestUDPTracker runs tests on a UDP tracker to determine its functionality
+// and feature-completeness.
+func TestUDPTracker(addr string) (*UDPResult, error) {
+	toReturn := &UDPResult{
+		TrackerResult: TrackerResult{
+			Tests: make([]Test, 0),
+		},
+	}
+
+	f := func() (poke.Announcer, error) {
+		c, err := udp.NewClient(addr)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+
+	err := runAll(f, &toReturn.TrackerResult)
+	if err != nil {
+		return nil, err
+	}
+
+	return toReturn, nil
+}
+
+func testTrackerSupportsAnnouncingPeerNotInPeerList(c poke.Announcer, result *TrackerResult) error {
+	t := Test{
+		Name: "trackerSupportsAnnouncingPeerNotInPeerListAnnounce",
+	}
+
+	res, err := trackerSupportsAnnouncingPeerNotInPeerListAnnounce(c)
+	t.Run = true
+	t.Result.Err = err
+	t.Result.Result = res
+	if err != nil {
+		result.SupportsAnnouncingPeerNotInPeerList = false
+	} else {
+		result.SupportsAnnouncingPeerNotInPeerList = res
+	}
+	result.Tests = append(result.Tests, t)
+
+	return nil
+}
+
+func testTrackerSupportsIPSpoofing(c poke.Announcer, result *TrackerResult) error {
+	t := Test{
+		Name: "trackerSupportsIPSpoofingAnnounce",
+	}
+
+	res, err := trackerSupportsIPSpoofingAnnounce(c, result.SupportsAnnouncingPeerNotInPeerList)
+	t.Run = true
+	t.Result.Err = err
+	t.Result.Result = res
+	if err != nil {
+		result.SupportsIPSpoofing = false
+	} else {
+		result.SupportsIPSpoofing = res
+	}
+	result.Tests = append(result.Tests, t)
+
+	return nil
+}
+
+func testTrackerSupportsOptimizedSeederResponse(c poke.Announcer, result *TrackerResult) error {
+	t := Test{
+		Name: "trackerSupportsOptimizedSeederResponseAnnounce",
+	}
+	res, err := trackerSupportsOptimizedSeederAnnounce(c)
+	t.Run = true
+	t.Result.Err = err
+	t.Result.Result = res
+	if err != nil {
+		result.SupportsOptimizedSeederResponse = false
+	} else {
+		result.SupportsOptimizedSeederResponse = res
+	}
+	result.Tests = append(result.Tests, t)
+
+	return nil
+}
+
+func runBasicAnnounce(c poke.Announcer, result *TrackerResult) error {
+	t := Test{
+		Name: "basicAnnounce",
+	}
+	err := basicAnnounce(c, result.SupportsAnnouncingPeerNotInPeerList)
+	t.Run = true
+	t.Result.Err = err
+	result.Tests = append(result.Tests, t)
+
+	return nil
+}
+
+func runAll(f func() (poke.Announcer, error), result *TrackerResult) error {
+	c, err := f()
+	if err != nil {
+		return err
+	}
+	err = testTrackerSupportsAnnouncingPeerNotInPeerList(c, result)
+	if err != nil {
+		return err
+	}
+
+	err = testTrackerSupportsIPSpoofing(c, result)
+	if err != nil {
+		return err
+	}
+
+	err = testTrackerSupportsOptimizedSeederResponse(c, result)
+	if err != nil {
+		return err
+	}
+
+	err = runBasicAnnounce(c, result)
+
+	return err
+}
+
+// TestHTTPTracker runs tests on an HTTP tracker to determine its functionality
+// and feature-completeness.
+func TestHTTPTracker(announceURI string) (*HTTPResult, error) {
+	toReturn := &HTTPResult{
+		TrackerResult: TrackerResult{
+			Tests: make([]Test, 0),
+		},
+	}
+	t := Test{
+		Name: "trackerSupportsCompactAnnounce",
+		Run:  true,
+	}
+	supportsCompact, err := trackerSupportsCompactHTTPAnnounce(announceURI)
+	t.Result.Err = err
+	t.Result.Result = supportsCompact
+	if err != nil {
+		toReturn.SupportsCompact = false
+	} else {
+		toReturn.SupportsCompact = supportsCompact
+	}
+	toReturn.Tests = append(toReturn.Tests, t)
+
+	t = Test{
+		Name: "trackerSupportsNonCompactAnnounce",
+		Run:  true,
+	}
+	supportsNonCompact, err := trackerSupportsNonCompactHTTPAnnounce(announceURI)
+	t.Result.Err = err
+	t.Result.Result = supportsNonCompact
+	if err != nil {
+		toReturn.SupportsNonCompact = false
+	} else {
+		toReturn.SupportsNonCompact = supportsNonCompact
+	}
+	toReturn.Tests = append(toReturn.Tests, t)
+
+	if !toReturn.SupportsCompact && !toReturn.SupportsNonCompact {
+		// We cannot run tests.
+		return toReturn, nil
+	}
+
+	f := func() (poke.Announcer, error) {
+		c, err := http.NewClient(announceURI)
+		if err != nil {
+			return nil, err
+		}
+		c.OverrideCompact(toReturn.SupportsCompact)
+		return c, nil
+	}
+
+	err = runAll(f, &toReturn.TrackerResult)
+	if err != nil {
+		return nil, err
+	}
+
+	return toReturn, nil
+}
+
+// BasicHTTPCompactAnnounce performs a basic, compact HTTP announce.
+func BasicHTTPCompactAnnounce(announceURI string, trackerSupportsAnnouncingPeerNotInPeerList bool) error {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return err
+	}
+	c.OverrideCompact(true)
+	return basicAnnounce(c, trackerSupportsAnnouncingPeerNotInPeerList)
 }
 
 // BasicHTTPNonCompactAnnounce performs a basic, non-compact HTTP announce.
-func BasicHTTPNonCompactAnnounce(announceURI string) error {
-	return basicHTTPNonCompactAnnounce(announceURI)
+func BasicHTTPNonCompactAnnounce(announceURI string, trackerSupportsAnnouncingPeerNotInPeerList bool) error {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return err
+	}
+	c.OverrideCompact(false)
+	return basicAnnounce(c, trackerSupportsAnnouncingPeerNotInPeerList)
 }
 
 // BasicHTTPSeederAnnounce performs a basic HTTP announce as a seeder.
@@ -24,10 +246,26 @@ func BasicHTTPSeederAnnounce(announceURI string) error {
 	return basicHTTPSeederAnnounce(announceURI)
 }
 
-// TrackerSupportsIPSpoofingHTTPAnnounce reports whether the tracker supports
-// IP spoofing via HTTP announce.
-func TrackerSupportsIPSpoofingHTTPAnnounce(announceURI string) (bool, error) {
-	return trackerSupportsIPSpoofingHTTPAnnounce(announceURI)
+// TrackerSupportsIPSpoofingHTTPNonCompactAnnounce reports whether the tracker
+// supports IP spoofing via HTTP non-compact announce.
+func TrackerSupportsIPSpoofingHTTPNonCompactAnnounce(announceURI string, trackerSupportsOptimizedPeerList bool) (bool, error) {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return false, err
+	}
+	c.OverrideCompact(false)
+	return trackerSupportsIPSpoofingAnnounce(c, trackerSupportsOptimizedPeerList)
+}
+
+// TrackerSupportsIPSpoofingHTTPCompactAnnounce reports whether the tracker
+// supports IP spoofing via HTTP compact announce.
+func TrackerSupportsIPSpoofingHTTPCompactAnnounce(announceURI string, trackerSupportsOptimizedPeerList bool) (bool, error) {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return false, err
+	}
+	c.OverrideCompact(true)
+	return trackerSupportsIPSpoofingAnnounce(c, trackerSupportsOptimizedPeerList)
 }
 
 // TrackerSupportsCompactHTTPAnnounce reports whether the tracker supports
@@ -44,21 +282,36 @@ func TrackerSupportsNonCompactHTTPAnnounce(announceURI string) (bool, error) {
 
 // TrackerSupportsOptimizedSeederHTTPAnnounce reports whether the tracker
 // supports optimizing seeder's HTTP announces by not returning other seeders
-// in the peer list.
-func TrackerSupportsOptimizedSeederHTTPAnnounce(announceURI string) (bool, error) {
-	return trackerSupportsOptimizedSeederHTTPAnnounce(announceURI)
+// in the peer list for compact announces.
+func TrackerSupportsOptimizedSeederHTTPAnnounce(announceURI string, trackerSupportsCompactAnnounce bool) (bool, error) {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return false, err
+	}
+	c.OverrideCompact(trackerSupportsCompactAnnounce)
+	return trackerSupportsOptimizedSeederAnnounce(c)
 }
 
-// TrackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce reports whether the
-// tracker supports leaving the announcing peer out of the peer list returned.
-func TrackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI string) (bool, error) {
-	return trackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI)
+// TrackerSupportsAnnouncingPeerNotInPeerListHTTPCompactAnnounce reports
+// whether the tracker supports leaving the announcing peer out of the peer list
+// returned for compact announces.
+func TrackerSupportsAnnouncingPeerNotInPeerListHTTPCompactAnnounce(announceURI string, trackerSupportsCompactAnnounce bool) (bool, error) {
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return false, err
+	}
+	c.OverrideCompact(trackerSupportsCompactAnnounce)
+	return trackerSupportsAnnouncingPeerNotInPeerListAnnounce(c)
 }
 
 // CheckReturnedPeersHTTPAnnounce checks whether the peers returned by an
 // HTTP announce are correct.
 func CheckReturnedPeersHTTPAnnounce(announceURI string) error {
-	return checkReturnedPeersHTTPAnnounce(announceURI)
+	c, err := http.NewClient(announceURI)
+	if err != nil {
+		return err
+	}
+	return checkReturnedPeersAnnounce(c)
 }
 
 // InvalidShortInfohashHTTPAnnounce checks whether the tracker rejects announces
@@ -106,21 +359,22 @@ func InvalidNegativeLeftHTTPAnnounce(announceURI string) error {
 // InvalidEventHTTPAnnounce checks whether the tracker rejects announces with
 // an invalid event.
 func InvalidEventHTTPAnnounce(announceURI string) error {
-	return invalidEventHTTPAnnounce(announceURI)
-}
-
-func basicHTTPAnnounce(announceURI string) error {
 	c, err := http.NewClient(announceURI)
 	if err != nil {
-		return poke.WrapError("unable to create client", err)
+		return err
 	}
+	return invalidEventAnnounce(c)
+}
 
+func basicAnnounce(c poke.Announcer, trackerSupportsAnnouncingPeerNotInPeerList bool) error {
+	if poke.Debug {
+		log.Println("Running basicAnnounce")
+	}
 	req := poke.AnnounceRequest{
 		InfoHash: poke.NewInfohash(rand.New(rand.NewSource(time.Now().UnixNano()))),
 		Peer:     poke.NewPeer(rand.New(rand.NewSource(time.Now().UnixNano()))),
 		Event:    poke.EventStarted,
 		Numwant:  50,
-		Compact:  true,
 		Left:     100,
 	}
 
@@ -129,43 +383,25 @@ func basicHTTPAnnounce(announceURI string) error {
 		return poke.WrapError("unable to perform announce", err)
 	}
 
-	if resp.Complete != 0 || resp.Incomplete != 1 {
-		return errors.New("first announce does not have zero seeders and one leecher (the one that just announced)")
-	}
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if resp.Complete != 0 || resp.Incomplete != 1 {
+			return errors.New("first announce does not have zero seeders and one leecher (the one that just announced)")
+		}
 
-	if len(resp.Peers) > 0 {
-		return errors.New("first announce is not empty")
-	}
-
-	return nil
-}
-
-func basicHTTPNonCompactAnnounce(announceURI string) error {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return poke.WrapError("unable to create client", err)
-	}
-
-	req := poke.AnnounceRequest{
-		InfoHash: poke.NewInfohash(rand.New(rand.NewSource(time.Now().UnixNano()))),
-		Peer:     poke.NewPeer(rand.New(rand.NewSource(time.Now().UnixNano()))),
-		Event:    poke.EventStarted,
-		Numwant:  50,
-		Compact:  false,
-		Left:     100,
-	}
-
-	resp, err := c.Announce(req)
-	if err != nil {
-		return poke.WrapError("unable to perform announce", err)
-	}
-
-	if resp.Complete != 0 || resp.Incomplete != 1 {
-		return errors.New("first announce does not have zero seeders and one leecher (the one that just announced)")
-	}
-
-	if len(resp.Peers) > 0 {
-		return errors.New("first announce is not empty")
+		if trackerSupportsAnnouncingPeerNotInPeerList {
+			if len(resp.Peers) != 0 {
+				return errors.New("first announce is not empty")
+			}
+		} else {
+			if len(resp.Peers) != 1 {
+				return errors.New("expected one peer for first announce")
+			}
+		}
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return nil
@@ -201,12 +437,28 @@ func trackerSupportsCompactHTTPAnnounce(announceURI string) (bool, error) {
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) != 1 {
-		return false, errors.New("announce did not return the other known leecher")
-	}
-
-	if resp.Peers[0].ID == "" {
-		return true, nil
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		switch len(resp.Peers) {
+		case 2:
+			if resp.Peers[0].Port == leecher1.Port || resp.Peers[1].Port == leecher1.Port {
+				return true, nil
+			}
+			return false, errors.New("announce returned unknown peer")
+		case 1:
+			if resp.Peers[0].Port == leecher1.Port {
+				return true, nil
+			}
+			return false, errors.New("announce returned unknown peer")
+		case 0:
+			return false, errors.New("announce did not return the other known leecher")
+		default:
+			return false, errors.New("announce returned too many peers")
+		}
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return false, nil
@@ -242,12 +494,28 @@ func trackerSupportsNonCompactHTTPAnnounce(announceURI string) (bool, error) {
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) != 1 {
-		return false, errors.New("announce did not return the other known leecher")
-	}
-
-	if resp.Peers[0].ID == leecher1.ID {
-		return true, nil
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		switch len(resp.Peers) {
+		case 2:
+			if resp.Peers[0].Port == leecher1.Port || resp.Peers[1].Port == leecher1.Port {
+				return true, nil
+			}
+			return false, errors.New("announce returned unknown peer")
+		case 1:
+			if resp.Peers[0].Port == leecher1.Port {
+				return true, nil
+			}
+			return false, errors.New("announce returned unknown peer")
+		case 0:
+			return false, errors.New("announce did not return the other known leecher")
+		default:
+			return false, errors.New("announce returned too many peers")
+		}
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return false, nil
@@ -272,30 +540,33 @@ func basicHTTPSeederAnnounce(announceURI string) error {
 	if err != nil {
 		return poke.WrapError("unable to perform announce", err)
 	}
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if resp.Complete != 1 || resp.Incomplete != 0 {
+			return errors.New("first announce does not have zero leechers and one seeder (the one that just announced)")
+		}
 
-	if resp.Complete != 1 || resp.Incomplete != 0 {
-		return errors.New("first announce does not have zero leechers and one seeder (the one that just announced)")
-	}
-
-	if len(resp.Peers) > 0 {
-		return errors.New("first announce is not empty")
+		if len(resp.Peers) > 0 {
+			return errors.New("first announce is not empty")
+		}
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return nil
 }
 
-func trackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI string) (bool, error) {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return false, poke.WrapError("unable to create client", err)
+func trackerSupportsAnnouncingPeerNotInPeerListAnnounce(c poke.Announcer) (bool, error) {
+	if poke.Debug {
+		log.Println("Running trackerSupportsAnnouncingPeerNotInPeerList")
 	}
-
 	req := poke.AnnounceRequest{
 		InfoHash: poke.NewInfohash(rand.New(rand.NewSource(time.Now().UnixNano()))),
 		Peer:     poke.NewPeer(rand.New(rand.NewSource(time.Now().UnixNano()))),
 		Event:    poke.EventStarted,
 		Numwant:  50,
-		Compact:  true,
 		Left:     100,
 	}
 
@@ -304,10 +575,15 @@ func trackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI string) 
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	for _, p := range resp.Peers {
-		if p.IsEqual(req.Peer) {
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) > 0 {
 			return false, nil
 		}
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
 
 	req.Left = 50
@@ -318,23 +594,29 @@ func trackerSupportsAnnouncingPeerNotInPeerListHTTPAnnounce(announceURI string) 
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) == 0 {
-		return true, nil
-	} else if len(resp.Peers) == 1 {
-		if resp.Peers[0].IsEqual(req.Peer) {
-			return false, nil
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) == 0 {
+			return true, nil
+		} else if len(resp.Peers) == 1 {
+			if resp.Peers[0].IsEqual(req.Peer) {
+				return false, nil
+			}
+			return false, errors.New("second announce with equal peer returned unknown peer")
 		}
+		return false, errors.New("second announce with equal peer did return more than one peer")
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
-	return false, errors.New("second announce with equal peer did return more than one peer")
-
+	return false, nil
 }
 
-func trackerSupportsIPSpoofingHTTPAnnounce(announceURI string) (bool, error) {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return false, poke.WrapError("unable to create client", err)
+func trackerSupportsIPSpoofingAnnounce(c poke.Announcer, trackerSupportsAnnouncingPeerNotInPeerList bool) (bool, error) {
+	if poke.Debug {
+		log.Println("Running trackerSupportsIPSpoofingAnnounce")
 	}
-
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	leecher1 := poke.NewPeer(r)
 	leecher2 := poke.NewPeer(r)
@@ -344,39 +626,58 @@ func trackerSupportsIPSpoofingHTTPAnnounce(announceURI string) (bool, error) {
 		Peer:     leecher1,
 		Event:    poke.EventStarted,
 		Numwant:  50,
-		Compact:  false,
 		Left:     100,
 	}
-
-	_, err = c.Announce(req)
-	if err != nil {
-		return false, poke.WrapError("unable to perform announce", err)
-	}
-
-	req.Peer = leecher2
-	req.Left = 120
 
 	resp, err := c.Announce(req)
 	if err != nil {
 		return false, poke.WrapError("unable to perform announce", err)
 	}
-
-	if len(resp.Peers) != 1 || resp.Peers[0].ID != leecher1.ID {
-		return false, errors.New("announce of second peer did not return known peer")
+	switch resp := resp.(type) {
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
+	default:
 	}
 
-	if resp.Peers[0].IP.Equal(leecher1.IP) {
-		return true, nil
+	req.Peer = leecher2
+	req.Left = 120
+
+	resp, err = c.Announce(req)
+	if err != nil {
+		return false, poke.WrapError("unable to perform announce", err)
+	}
+
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if trackerSupportsAnnouncingPeerNotInPeerList {
+			if len(resp.Peers) != 1 || resp.Peers[0].Port != leecher1.Port {
+				return false, errors.New("announce of second peer did not return known peer")
+			}
+
+			if resp.Peers[0].IP.Equal(leecher1.IP) {
+				return true, nil
+			}
+		} else {
+			if len(resp.Peers) != 2 || (resp.Peers[0].Port != leecher1.Port && resp.Peers[0].Port != leecher2.Port) || (resp.Peers[1].Port != leecher1.Port && resp.Peers[1].Port != leecher2.Port) {
+				return false, errors.New("announce of second peer returned unknown peer")
+			}
+
+			if resp.Peers[0].IP.Equal(leecher1.IP) || resp.Peers[1].IP.Equal(leecher2.IP) {
+				return true, nil
+			}
+		}
+
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
 	return false, nil
 }
 
-func trackerSupportsOptimizedSeederHTTPAnnounce(announceURI string) (bool, error) {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return false, poke.WrapError("unable to create client", err)
-	}
-
+func trackerSupportsOptimizedSeederAnnounce(c poke.Announcer) (bool, error) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	leecher1 := poke.NewPeer(r)
 	seeder1 := poke.NewPeer(r)
@@ -387,49 +688,64 @@ func trackerSupportsOptimizedSeederHTTPAnnounce(announceURI string) (bool, error
 		Peer:     leecher1,
 		Event:    poke.EventStarted,
 		Numwant:  50,
-		Compact:  false,
 		Left:     100,
 	}
 
-	_, err = c.Announce(req)
+	resp, err := c.Announce(req)
 	if err != nil {
 		return false, poke.WrapError("unable to perform announce", err)
+	}
+	switch resp := resp.(type) {
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
+	default:
 	}
 
 	req.Peer = seeder1
 	req.Left = 0
 
-	_, err = c.Announce(req)
+	resp, err = c.Announce(req)
 	if err != nil {
 		return false, poke.WrapError("unable to perform announce", err)
+	}
+	switch resp := resp.(type) {
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
+	default:
 	}
 
 	req.Peer = seeder2
 
-	resp, err := c.Announce(req)
+	resp, err = c.Announce(req)
 	if err != nil {
 		return false, poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) < 1 {
-		return false, errors.New("announce did not return an expected peer")
-	} else if len(resp.Peers) > 1 {
-		return false, nil
-	}
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) < 1 {
+			return false, errors.New("announce did not return an expected peer")
+		} else if len(resp.Peers) > 1 {
+			return false, nil
+		}
 
-	if resp.Peers[0].ID == leecher1.ID {
-		return true, nil
+		if resp.Peers[0].Port == leecher1.Port {
+			return true, nil
+		}
+	case poke.ErrorResponse:
+		return false, errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return false, errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return false, nil
 }
 
-func checkReturnedPeersHTTPAnnounce(announceURI string) error {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return poke.WrapError("unable to create client", err)
-	}
-
+func checkReturnedPeersAnnounce(c poke.Announcer) error {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	leecher1 := poke.NewPeer(r)
 	leecher2 := poke.NewPeer(r)
@@ -445,21 +761,35 @@ func checkReturnedPeersHTTPAnnounce(announceURI string) error {
 		Left:     100,
 	}
 
-	_, err = c.Announce(req)
+	resp, err := c.Announce(req)
 	if err != nil {
 		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp := resp.(type) {
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
+	default:
 	}
 
 	req.Peer = leecher2
 	req.Left = 120
 
-	resp, err := c.Announce(req)
+	resp, err = c.Announce(req)
 	if err != nil {
 		return poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) != 1 || !resp.Peers[0].IsEqual(leecher1) {
-		return errors.New("announce did not return the other known peer")
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) != 1 || !resp.Peers[0].IsEqual(leecher1) {
+			return errors.New("announce did not return the other known peer")
+		}
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
 	}
 
 	req.Peer = seeder1
@@ -470,19 +800,33 @@ func checkReturnedPeersHTTPAnnounce(announceURI string) error {
 		return poke.WrapError("unable to perform announce", err)
 	}
 
-	if len(resp.Peers) != 2 {
-		return errors.New("seeder announce did not return the two known peers")
-	}
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) != 2 {
+			return errors.New("seeder announce did not return the two known peers")
+		}
 
-	if !((resp.Peers[0].IsEqual(leecher1) || resp.Peers[0].IsEqual(leecher2)) && (resp.Peers[1].IsEqual(leecher1) || resp.Peers[1].IsEqual(leecher2))) {
-		return errors.New("seeder announce did not return the two known peers")
+		if !((resp.Peers[0].IsEqual(leecher1) || resp.Peers[0].IsEqual(leecher2)) && (resp.Peers[1].IsEqual(leecher1) || resp.Peers[1].IsEqual(leecher2))) {
+			return errors.New("seeder announce did not return the two known peers")
+		}
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
 	}
 
 	req.Peer = seeder2
 
-	_, err = c.Announce(req)
+	resp, err = c.Announce(req)
 	if err != nil {
 		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp := resp.(type) {
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
+	default:
 	}
 
 	req.Peer = leecher1
@@ -493,15 +837,21 @@ func checkReturnedPeersHTTPAnnounce(announceURI string) error {
 	if err != nil {
 		return poke.WrapError("unable to perform announce", err)
 	}
+	switch resp := resp.(type) {
+	case poke.AnnounceResponse:
+		if len(resp.Peers) != 3 {
+			return errors.New("leecher announce did not return both known seeders and the other leecher")
+		}
 
-	if len(resp.Peers) != 3 {
-		return errors.New("leecher announce did not return both known seeders and the other leecher")
-	}
-
-	if !((resp.Peers[0].IsEqual(leecher2) || resp.Peers[0].IsEqual(seeder1) || resp.Peers[0].IsEqual(seeder2)) &&
-		(resp.Peers[1].IsEqual(leecher2) || resp.Peers[1].IsEqual(seeder1) || resp.Peers[1].IsEqual(seeder2)) &&
-		(resp.Peers[2].IsEqual(leecher2) || resp.Peers[2].IsEqual(seeder1) || resp.Peers[2].IsEqual(seeder2))) {
-		return errors.New("leecher announce did not return both known seeders and the other leecher")
+		if !((resp.Peers[0].IsEqual(leecher2) || resp.Peers[0].IsEqual(seeder1) || resp.Peers[0].IsEqual(seeder2)) &&
+			(resp.Peers[1].IsEqual(leecher2) || resp.Peers[1].IsEqual(seeder1) || resp.Peers[1].IsEqual(seeder2)) &&
+			(resp.Peers[2].IsEqual(leecher2) || resp.Peers[2].IsEqual(seeder1) || resp.Peers[2].IsEqual(seeder2))) {
+			return errors.New("leecher announce did not return both known seeders and the other leecher")
+		}
+	case poke.ErrorResponse:
+		return errors.New("tracker returned errror: " + string(resp))
+	case poke.WarningResponse:
+		return errors.New("tracker returned warning: " + string(resp))
 	}
 
 	return nil
@@ -522,12 +872,16 @@ func invalidShortInfohashHTTPAnnounce(announceURI string) error {
 		Left:     100,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
-		return errors.New("announce with invalid too short infohash did not fail")
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
 	}
-
-	return nil
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
+		return errors.New("announce with too short infohash did not return error")
+	}
 }
 
 func invalidLongInfohashHTTPAnnounce(announceURI string) error {
@@ -548,12 +902,16 @@ func invalidLongInfohashHTTPAnnounce(announceURI string) error {
 		Left:    100,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid too long infohash did not fail")
 	}
-
-	return nil
 }
 
 func invalidShortPeerIDHTTPAnnounce(announceURI string) error {
@@ -573,12 +931,16 @@ func invalidShortPeerIDHTTPAnnounce(announceURI string) error {
 
 	req.Peer.ID = req.Peer.ID[:19]
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid too short peerID did not fail")
 	}
-
-	return nil
 }
 
 func invalidLongPeerIDHTTPAnnounce(announceURI string) error {
@@ -598,12 +960,16 @@ func invalidLongPeerIDHTTPAnnounce(announceURI string) error {
 
 	req.Peer.ID += "9"
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid too long peerID did not fail")
 	}
-
-	return nil
 }
 
 func invalidNegativeUploadedHTTPAnnounce(announceURI string) error {
@@ -622,12 +988,16 @@ func invalidNegativeUploadedHTTPAnnounce(announceURI string) error {
 		Uploaded: -1,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid negative uploaded did not fail")
 	}
-
-	return nil
 }
 
 func invalidNegativeDownloadedHTTPAnnounce(announceURI string) error {
@@ -646,12 +1016,16 @@ func invalidNegativeDownloadedHTTPAnnounce(announceURI string) error {
 		Downloaded: -1,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid negative downloaded did not fail")
 	}
-
-	return nil
 }
 
 func invalidNegativeLeftHTTPAnnounce(announceURI string) error {
@@ -669,20 +1043,19 @@ func invalidNegativeLeftHTTPAnnounce(announceURI string) error {
 		Left:     -1,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid negative left did not fail")
 	}
-
-	return nil
 }
 
-func invalidEventHTTPAnnounce(announceURI string) error {
-	c, err := http.NewClient(announceURI)
-	if err != nil {
-		return poke.WrapError("unable to create client", err)
-	}
-
+func invalidEventAnnounce(c poke.Announcer) error {
 	req := poke.AnnounceRequest{
 		InfoHash: poke.NewInfohash(rand.New(rand.NewSource(time.Now().UnixNano()))),
 		Peer:     poke.NewPeer(rand.New(rand.NewSource(time.Now().UnixNano()))),
@@ -692,10 +1065,14 @@ func invalidEventHTTPAnnounce(announceURI string) error {
 		Left:     100,
 	}
 
-	_, err = c.Announce(req)
-	if err == nil {
+	resp, err := c.Announce(req)
+	if err != nil {
+		return poke.WrapError("unable to perform announce", err)
+	}
+	switch resp.(type) {
+	case poke.ErrorResponse:
+		return nil
+	default:
 		return errors.New("announce with invalid event did not fail")
 	}
-
-	return nil
 }

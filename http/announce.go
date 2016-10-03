@@ -50,8 +50,10 @@ type NonCompactAnnounceResponse struct {
 
 // Client is a client for an http tracker.
 type Client struct {
-	address *url.URL
-	client  *http.Client
+	address         *url.URL
+	client          *http.Client
+	overrideCompact bool
+	compact         bool
 }
 
 var _ poke.Announcer = &Client{}
@@ -69,12 +71,27 @@ func NewClient(announceAddress string) (*Client, error) {
 	}, nil
 }
 
+// OverrideCompact instructs the Client to override the compact value set in an
+// AnnounceRequest with the given value for all future announces.
+func (c *Client) OverrideCompact(to bool) {
+	c.overrideCompact = true
+	c.compact = to
+}
+
 // Announce announces to the tracker.
-func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error) {
+func (c *Client) Announce(a poke.AnnounceRequest) (poke.OptionalAnnounceResponse, error) {
 	u, err := url.Parse(c.address.String())
 	if err != nil {
 		panic("url re-parse error")
 	}
+
+	var compact bool
+	if c.overrideCompact {
+		compact = c.compact
+	} else {
+		compact = a.Compact
+	}
+
 	v := u.Query()
 	v.Set("info_hash", string(a.InfoHash))
 	v.Set("peer_id", a.ID)
@@ -82,7 +99,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	v.Set("uploaded", fmt.Sprint(a.Uploaded))
 	v.Set("downloaded", fmt.Sprint(a.Downloaded))
 	v.Set("left", fmt.Sprint(a.Left))
-	if a.Compact {
+	if compact {
 		v.Set("compact", "1")
 	}
 
@@ -124,7 +141,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	}
 	poke.Debugf("Response: %s\n", string(b))
 
-	if a.Compact {
+	if compact {
 		r := CompactAnnounceResponse{}
 		err = bencode.DecodeBytes(b, &r)
 		if err != nil {
@@ -132,17 +149,17 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 		}
 
 		if strings.Contains(string(b), "failure reason") {
-			return nil, errors.New("tracker returned error")
+			return poke.ErrorResponse("poke: <unable to parse>"), nil
 		}
 		if strings.Contains(string(b), "warning message") {
-			return nil, errors.New("tracker returned warning")
+			return poke.WarningResponse("poke: <unable to parse>"), nil
 		}
 
 		if r.FailureReason != "" {
-			return nil, fmt.Errorf("tracker returned error: %s", r.FailureReason)
+			return poke.ErrorResponse(r.FailureReason), nil
 		}
 		if r.WarningMessage != "" {
-			return nil, fmt.Errorf("tracker returned warning: %s", r.FailureReason)
+			return poke.WarningResponse(r.WarningMessage), nil
 		}
 
 		ann := poke.AnnounceResponse{
@@ -175,7 +192,7 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 			ann.Peers = append(ann.Peers, peer)
 		}
 
-		return &ann, nil
+		return ann, nil
 	}
 
 	r := NonCompactAnnounceResponse{}
@@ -185,17 +202,17 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 	}
 
 	if strings.Contains(string(b), "failure reason") {
-		return nil, errors.New("tracker returned error")
+		return poke.ErrorResponse("poke: <unable to parse>"), nil
 	}
 	if strings.Contains(string(b), "warning message") {
-		return nil, errors.New("tracker returned warning")
+		return poke.WarningResponse("poke: <unable to parse>"), nil
 	}
 
 	if r.FailureReason != "" {
-		return nil, fmt.Errorf("tracker returned error: %s", r.FailureReason)
+		return poke.ErrorResponse(r.FailureReason), nil
 	}
 	if r.WarningMessage != "" {
-		return nil, fmt.Errorf("tracker returned warning: %s", r.FailureReason)
+		return poke.WarningResponse(r.WarningMessage), nil
 	}
 
 	ann := poke.AnnounceResponse{
@@ -215,5 +232,5 @@ func (c *Client) Announce(a poke.AnnounceRequest) (*poke.AnnounceResponse, error
 		ann.Peers = append(ann.Peers, p)
 	}
 
-	return &ann, nil
+	return ann, nil
 }
