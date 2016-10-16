@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"strings"
@@ -226,6 +227,10 @@ func (c *Client) Announce(req poke.AnnounceRequest) (poke.OptionalAnnounceRespon
 		req.IP = ip
 	}
 
+	if poke.Debug {
+		log.Printf("Announcing: %+v", req)
+	}
+
 	if c.autoConnect {
 		connID, err := c.manualConnect()
 		if err != nil {
@@ -296,6 +301,10 @@ func (c *Client) Announce(req poke.AnnounceRequest) (poke.OptionalAnnounceRespon
 				IP:   net.IP(buf[20+6*i : 24+6*i]),
 				Port: binary.BigEndian.Uint16(buf[24+6*i : 26+6*i]),
 			})
+	}
+
+	if poke.Debug {
+		log.Printf("Got announce response: %+v", toReturn)
 	}
 
 	return toReturn, nil

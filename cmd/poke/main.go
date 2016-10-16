@@ -2,17 +2,16 @@ package main
 
 import (
 	"flag"
-	"log"
-
 	"fmt"
+	"log"
 
 	"github.com/mrd0ll4r/poke"
 	"github.com/mrd0ll4r/poke/tests"
 )
 
 func init() {
-	flag.StringVar(&announceURI, "a", "http://localhost:6881/announce", "the announce URI")
-	flag.StringVar(&udpAnnounceURI, "u", "localhost:6881", "the UDP announce URI")
+	flag.StringVar(&announceURI, "a", "http://tracker.org:6881/announce", "the announce URI")
+	flag.StringVar(&udpAnnounceURI, "u", "tracker.org:6881", "the UDP announce URI")
 	flag.BoolVar(&debug, "debug", false, "debug mode")
 }
 
@@ -27,7 +26,7 @@ func main() {
 
 	poke.Debug = debug
 
-	if udpAnnounceURI != "" {
+	if f := flag.Lookup("u"); f != nil && f.Value.String() != f.DefValue {
 		runUDPTests(udpAnnounceURI)
 	} else {
 		runHTTPTests(announceURI)
